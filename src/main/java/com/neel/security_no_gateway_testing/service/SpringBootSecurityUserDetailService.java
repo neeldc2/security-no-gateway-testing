@@ -8,6 +8,7 @@ import org.springframework.security.core.userdetails.UsernameNotFoundException;
 import org.springframework.stereotype.Service;
 
 import java.util.Set;
+import java.util.UUID;
 
 @Service
 public class SpringBootSecurityUserDetailService implements UserDetailsService {
@@ -41,4 +42,16 @@ public class SpringBootSecurityUserDetailService implements UserDetailsService {
         );
     }
 
+    public UserDetails loadUserByUserId(UUID userId) throws UsernameNotFoundException {
+        User user = userRepository.findById(userId)
+                .orElseThrow(() -> new UsernameNotFoundException("User not found"));
+
+        return new org.springframework.security.core.userdetails.User(
+                user.getEmail(),
+                user.getPassword(),
+                user.isEnabled(),
+                true, true, true,
+                Set.of()
+        );
+    }
 }

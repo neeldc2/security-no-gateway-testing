@@ -8,7 +8,6 @@ import com.neel.security_no_gateway_testing.usercontext.UserContext;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
-import jakarta.servlet.http.HttpServletRequestWrapper;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
@@ -20,10 +19,10 @@ import org.springframework.util.StringUtils;
 import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
-import java.util.Collections;
-import java.util.Enumeration;
-import java.util.HashMap;
-import java.util.Map;
+import java.util.Set;
+import java.util.UUID;
+import java.util.stream.Collectors;
+import java.util.stream.Stream;
 
 import static com.neel.security_no_gateway_testing.constant.WebsiteLoginConstants.USER_CONTEXT_ATTRIBUTE;
 
@@ -35,6 +34,8 @@ import static com.neel.security_no_gateway_testing.constant.WebsiteLoginConstant
 public class AuthenticationJwtTokenFilter extends OncePerRequestFilter {
 
     public static final String AUTHORIZATION = "Authorization";
+    public static final String X_SERVICE = "x-service";
+    public static final String SERVICES_THAT_CAN_INVOKE_CORE = "website-1";
 
     @Autowired
     private JwtService jwtService;
@@ -51,6 +52,8 @@ public class AuthenticationJwtTokenFilter extends OncePerRequestFilter {
             final HttpServletResponse response,
             final FilterChain filterChain) throws ServletException, IOException {
         String authorisationHeader = request.getHeader(AUTHORIZATION);
+        // Add this as part of Feign Interceptor
+        String service = request.getHeader(X_SERVICE);
 
         if (StringUtils.hasText(authorisationHeader) &&
                 authorisationHeader.startsWith("Bearer ") &&
@@ -77,65 +80,52 @@ public class AuthenticationJwtTokenFilter extends OncePerRequestFilter {
 
                 User user = userRepository.findByEmail(email).get();
                 request.setAttribute(USER_CONTEXT_ATTRIBUTE, userContext);
-                request = addUserDetailsToHeader(request, userContext);
+            }
+        } else if (StringUtils.hasText(service) && service.equalsIgnoreCase(SERVICES_THAT_CAN_INVOKE_CORE)) {
+            // Whenever a service calls this service, it will already have user context in headers
+            final UserContext userContext = getUserContextFromHeaders(request);
+            if (userContext != null) {
+                UserDetails userDetails = springBootSecurityUserDetailService.loadUserByUserId(userContext.userId());
+
+                if (userDetails != null) {
+                    UsernamePasswordAuthenticationToken usernamePasswordAuthenticationToken =
+                            new UsernamePasswordAuthenticationToken(userDetails, null, userDetails.getAuthorities());
+                    usernamePasswordAuthenticationToken.setDetails(new WebAuthenticationDetailsSource().buildDetails(request));
+                    SecurityContextHolder.getContext().setAuthentication(usernamePasswordAuthenticationToken);
+
+                    // It will be used in UserContextInterceptor
+                    request.setAttribute(USER_CONTEXT_ATTRIBUTE, userContext);
+                }
             }
         }
 
         filterChain.doFilter(request, response);
     }
 
-    private HttpServletRequest addUserDetailsToHeader(final HttpServletRequest request,
-                                                      final UserContext userContextDto) {
-        return new HttpServletRequestWrapper(request) {
+    private UserContext getUserContextFromHeaders(
+            final HttpServletRequest request
+    ) {
+        String userId = request.getHeader("x-user-id");
+        String tenantName = request.getHeader("x-tenant");
+        String tenantId = request.getHeader("x-tenant-id");
+        String tenantGuid = request.getHeader("x-tenant-guid");
+        String permissionSetString = request.getHeader("x-permissions");
 
-            final String userId = userContextDto.userId().toString();
-            final String tenant = userContextDto.tenant();
-            final String tenantId = userContextDto.tenantId().toString();
-            final String tenantGuid = userContextDto.tenantGuid().toString();
-            final String permissionSet = userContextDto.permissions().toString();
+        if (!StringUtils.hasText(userId)) {
+            return null;
+        }
 
-            /*@Override
-            public String getHeader(String tenantName) {
-                if ("x-user-id".equalsIgnoreCase(tenantName)) {
-                    return userId;
-                }
-                return super.getHeader(tenantName);
-            }*/
+        UserContext.UserContextBuilder builder = UserContext.builder();
+        builder.userId(UUID.fromString(userId));
+        builder.tenant(tenantName);
+        builder.tenantId(Long.parseLong(tenantId));
+        builder.tenantGuid(UUID.fromString(tenantGuid));
+        Set<String> permissions = Stream.of(
+                        permissionSetString.substring(1, permissionSetString.length() - 1).split(",\\s*"))
+                .collect(Collectors.toSet());
+        builder.permissions(permissions);
 
-            @Override
-            public Enumeration<String> getHeaders(String name) {
-                if ("x-user-id" .equalsIgnoreCase(name)) {
-                    return Collections.enumeration(Collections.singletonList(userId));
-                }
-                if ("x-tenant" .equalsIgnoreCase(name)) {
-                    return Collections.enumeration(Collections.singletonList(tenant));
-                }
-                if ("x-tenant-id" .equalsIgnoreCase(name)) {
-                    return Collections.enumeration(Collections.singletonList(tenantId));
-                }
-                if ("x-tenant-guid" .equalsIgnoreCase(name)) {
-                    return Collections.enumeration(Collections.singletonList(tenantGuid));
-                }
-                if ("x-permissions" .equalsIgnoreCase(name)) {
-                    return Collections.enumeration(Collections.singletonList(permissionSet));
-                }
-                return super.getHeaders(name);
-            }
-
-            @Override
-            public Enumeration<String> getHeaderNames() {
-                Map<String, String> headers = new HashMap<>();
-                headers.put("x-user-id", userId);
-                headers.put("x-tenant", tenant);
-                headers.put("x-tenant-id", tenantId);
-                headers.put("x-tenant-guid", tenantGuid);
-                headers.put("x-permissions", permissionSet);
-                headers.putAll(Collections.list(super.getHeaderNames())
-                        .stream()
-                        .collect(HashMap::new, (m, v) -> m.put(v, super.getHeader(v)), Map::putAll));
-                return Collections.enumeration(headers.keySet());
-            }
-        };
+        return builder.build();
     }
 
 }

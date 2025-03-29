@@ -40,9 +40,9 @@ public class UserContextInterceptor implements HandlerInterceptor {
         if (containsUserContext) {
             UserContext userContext = (UserContext) request.getAttribute(USER_CONTEXT_ATTRIBUTE);
             UserContextHolder.setUserContext(userContext);
-        } else {
+        } /*else {
             setUserContextFromHeader(request);
-        }
+        }*/
 
         // It tells Spring to further process the request (true) or not (false).
         return true;
