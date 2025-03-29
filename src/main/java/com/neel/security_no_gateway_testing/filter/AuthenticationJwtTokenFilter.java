@@ -53,6 +53,7 @@ public class AuthenticationJwtTokenFilter extends OncePerRequestFilter {
             final FilterChain filterChain) throws ServletException, IOException {
         String authorisationHeader = request.getHeader(AUTHORIZATION);
         // Add this as part of Feign Interceptor
+        // Should be removed from gateway if someone sends this
         String service = request.getHeader(X_SERVICE);
 
         if (StringUtils.hasText(authorisationHeader) &&
